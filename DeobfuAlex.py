@@ -42,26 +42,39 @@ def Unquote (string):
     return (True, retval)
   except:
     return (False, string)
+
+def PHP_addSlashes(text):
+  return text.replace('"', '\\"')
+  
+def PHP_removeSlashes(text):
+  return text.replace( '\\"', '"',)
+
   
 def ab_____ (string):
-  return "".join( \
-    chr(ord(char) - 1) \
-       for char in string)
+  return PHP_addSlashes (
+    "".join( 
+      chr(ord(char) - 1)               
+        for char in PHP_removeSlashes(string)) 
+  )
 
 def implode (Array, arg=""):
   
   # Turn ['"ab__"', '"___"'] ...
     arg1  = str.split( Array, ',' )
     
-  # ... into ['ab__', '___'] ...  
+  # ... into ['ab__', '___'] ...
     arg1 = [Unquote(x)[1] for x in arg1 ]
     
   # ... and join it. 'ab_____'
     return arg.join(arg1)
-  
+
 def base64_decode ( arg ):
   try:
-    return base64.b64decode( arg ).decode('utf8')
+    retval = PHP_addSlashes ( base64.b64decode( arg ).decode('utf8') )
+  #  if retval.find('"') != -1:
+  #    raise BaseException('The decode base64 contains some ". That\'s unexpected. Untreated like this it will cause problems in the further processing. TODO: Mask double quotes in decoded base64 strings.' )
+    
+    return retval
   except Exception as e:
     LogLevel2 ( f"ERROR base64_decode(): {e}" )
     LogLevel2 (  "Error resolution: Skipping statement.")
@@ -119,7 +132,7 @@ def DoDeobfu_Static( RetVal,regex, DoQuoting=False, Namespace='\\Tygh\\' ):
     
   for matchNum, match in enumerate(matches, start=1):
   
-    LogLevel1( f"Match {matchNum}: {match.group()} @ {match.start()}-{match.end()} " )
+    LogLevel1( f"Match {matchNum}: {match.group()} @ {match.start()}" )
     
     searchThis = match.group(0)
     func       = match.group(1)
@@ -127,9 +140,12 @@ def DoDeobfu_Static( RetVal,regex, DoQuoting=False, Namespace='\\Tygh\\' ):
     
    
     if arg.find("call_user_func") != -1:
+      # That is mostly cause by still unresolved call_user_func's with all strings args like:
+      # call_user_func("\Tygh\Registry::get","settings_abam")
+      # ... one other approach to avoid this would be to grep reverse so the good short match is found first. (instead the long one - like now) 
       raise  BaseException( f"Matched too much.\n>{searchThis}<\nContiune here anyway would just introduce errors in the deobfuscated sourcecode")
     
-    #Cut off Namesapce
+    #Cut off namespace
     func = func.replace(Namespace, '' )
     
     if DoQuoting:
@@ -144,9 +160,9 @@ def DoDeobfu_Static( RetVal,regex, DoQuoting=False, Namespace='\\Tygh\\' ):
 
 
 PHP_EXEC =  {
-  "strrev"       : lambda arg:  arg[::-1]                              , 
-  "base64_decode": lambda arg:  base64_decode( arg )                   , 
-  "ab_____"      : lambda arg:  ab_____( arg )                         , 
+  "strrev"       : lambda arg:  PHP_addSlashes( PHP_removeSlashes(arg)[::-1])   , 
+  "base64_decode": lambda arg:  base64_decode( arg )                            , 
+  "ab_____"      : lambda arg:  ab_____( arg )                                  , 
   "implode"      : lambda arg:  implode( arg )
 }
 def DoDeobfu_Exec( RetVal, regex):
@@ -155,7 +171,7 @@ def DoDeobfu_Exec( RetVal, regex):
   
   for matchNum, match in enumerate( re.finditer(regex, RetVal) , start=1):
     
-    LogLevel1( f"Match {matchNum}: {match.group()} @ {match.start()}-{match.end()} " )
+    LogLevel1( f"Match {matchNum}: {match.group()} @ {match.start()}" )
     
     searchThis = match.group(0)
     func       = match.group(1)
@@ -194,8 +210,11 @@ def ProcessFile(FileName, FileNameNew):
     LogLevel0 ("Level #2 Execute strrev(), base64_decode(), ab_____()")
     reExpArrArg = r'\[([^\]]*)\]'
   
-    # That negative Lookahead is there to avoid matching implode too early:
-    reExpStrArg = r'"(?!implode)([^"]*)"'
+    # That negative lookahead is there to avoid matching implode too early:
+    # That second negative lookahead is there to support masking double quotes like "Quote: \"This is nice.\" " inside a double quoted strings 
+     
+    reExpStrArg = r'"(?!implode)([^(?!\\)"]*)"'
+    reExpStrArg = r'"(?!implode)(.*?)"'
     reExpArg = r'([^\)]*)'
   
     for pass_ in  range(1, 10):
@@ -213,8 +232,15 @@ def ProcessFile(FileName, FileNameNew):
   
     LogLevel0 ("Level #3 remove remaining call_user_func()")
     # Example >call_user_func("\Tygh\ABAManager::ch_a",true)<
+    phpFilelen_before = len(phpFileNew)
     phpFileNew = DoDeobfu_Static( phpFileNew,  fr'call_user_func\({reExpStrArg},{reExpStrArg}\)',True,'\\Tygh\\' )
-   # phpFileNew = DoDeobfu_Static( phpFileNew,  fr'call_user_func\({reExpStrArg},{reExpArg}\)'   ,False,'\\Tygh\\' )
+    phpFilelen_now = len(phpFileNew)
+    
+    phpFilelen_before = len(phpFileNew)
+    phpFileNew = DoDeobfu_Static( phpFileNew,  fr'call_user_func\({reExpStrArg},{reExpStrArg}\)',True,'\\Tygh\\' )
+    phpFilelen_now = len(phpFileNew)
+    
+    phpFileNew = DoDeobfu_Static( phpFileNew,  fr'call_user_func\({reExpStrArg},{reExpArg}\)'   ,False,'\\Tygh\\' )
     
   except Exception as e:
     LogLevel0(f"Error:{e}")
